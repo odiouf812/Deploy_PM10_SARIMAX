@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Souffle — PM2.5, prévisions et dose inhalée</title>
+  <meta name="description" content="Prévision du PM2.5 par SARIMAX et dose inhalée par simulation Monte-Carlo pour les épreuves d'athlétisme.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230D2B33'/%3E%3Crect x='6' y='10' width='20' height='12' rx='6' fill='none' stroke='%2371D3D0' stroke-width='2.2'/%3E%3Crect x='10' y='13.5' width='12' height='5' rx='2.5' fill='none' stroke='%2371D3D0' stroke-width='1.6' opacity='.6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Aller au contenu</a>
+
+  <header class="top">
+    <div class="wrap top-inner">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <rect x="3" y="10" width="34" height="20" rx="10" fill="none" stroke="currentColor" stroke-width="2.4"/>
+          <rect x="9" y="15" width="22" height="10" rx="5" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".55"/>
+        </svg>
+        <div>
+          <h1 class="brand-name">Souffle</h1>
+          <p class="brand-sub">Qualité de l'air et dose inhalée en athlétisme</p>
+        </div>
+      </div>
+      <div class="ds-chip" id="dsChip" hidden>
+        <span class="ds-dot" aria-hidden="true"></span>
+        <span id="dsChipText"></span>
+        <button class="ds-reset" id="btnReset" type="button" title="Recommencer avec un autre fichier">Changer</button>
+      </div>
+    </div>
+
+    <nav class="wrap stepper" id="stepper" aria-label="Étapes du traitement">
+      <button class="step" data-step="1" type="button"><span class="step-n">1</span><span class="step-t">Données<small>Fichier Excel</small></span></button>
+      <button class="step" data-step="2" type="button"><span class="step-n">2</span><span class="step-t">Modèle<small>SARIMAX</small></span></button>
+      <button class="step" data-step="3" type="button"><span class="step-n">3</span><span class="step-t">Prévisions<small>J+1 et J+2</small></span></button>
+      <button class="step" data-step="4" type="button"><span class="step-n">4</span><span class="step-t">Simulation<small>Monte-Carlo</small></span></button>
+      <button class="step" data-step="5" type="button"><span class="step-n">5</span><span class="step-t">Classification<small>Niveau et action</small></span></button>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap">
+
+    <!-- 1. DONNÉES -->
+    <section class="panel" id="panel1" data-panel="1" aria-labelledby="h1">
+      <div class="panel-head">
+        <h2 id="h1">Importez vos données journalières</h2>
+        <p>Un fichier Excel (.xlsx) avec les colonnes <b>Date</b>, <b>TC</b> (température, °C), <b>HR</b> (humidité relative, %) et <b>PM2.5</b> (µg/m³).</p>
+      </div>
+
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir ou déposer un fichier Excel">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+        <svg viewBox="0 0 48 48" class="drop-ico" aria-hidden="true"><path d="M24 33V11M24 11l-8 8M24 11l8 8M8 34v4a2 2 0 002 2h28a2 2 0 002-2v-4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="drop-text">
+          <strong>Déposez le fichier ici</strong>
+          <span>ou cliquez pour le choisir sur votre ordinateur</span>
+        </div>
+        <div class="drop-side">
+          <button class="btn btn-ghost" id="btnSample" type="button" hidden>Utiliser les données d'exemple</button>
+        </div>
+      </div>
+
+      <div id="dataResult" hidden>
+        <div class="sheetbar" id="sheetBar" hidden>
+          <label for="sheetSelect">Feuille Excel</label>
+          <select id="sheetSelect"></select>
+        </div>
+
+        <dl class="facts" id="dataFacts"></dl>
+        <div id="dataNotice" class="notice" hidden></div>
+
+        <div class="block">
+          <div class="block-title">Séries chronologiques <span class="hint">Faites glisser pour zoomer, double-clic pour revenir</span></div>
+          <div id="chartSeries" class="chart chart-tall"></div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">Aperçu des premières lignes</div>
+          <div class="table-wrap"><table class="tbl" id="previewTable"></table></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="btnToModel" type="button">Passer au modèle</button>
+          <button class="btn btn-ghost" id="btnRunAll" type="button">Tout exécuter d'un coup</button>
+          <span class="hint" id="runAllHint"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. MODÈLE -->
+    <section class="panel" id="panel2" data-panel="2" aria-labelledby="h2" hidden>
+      <div class="panel-head">
+        <h2 id="h2">Ajustez le modèle SARIMAX</h2>
+        <p>Le PM2.5 est expliqué par la température et l'humidité, avec des erreurs ARIMA. L'ordre du modèle est choisi automatiquement au meilleur AICc. TC et HR reçoivent chacun leur propre modèle saisonnier hebdomadaire, pour disposer de valeurs futures.</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnModel" type="button">Ajuster les modèles</button>
+        <span class="hint">Compter environ 20 secondes</span>
+      </div>
+      <div id="modelResult" hidden>
+        <div class="model-hero">
+          <div>
+            <div class="model-kicker">Modèle retenu pour le PM2.5</div>
+            <div class="model-name" id="modelName"></div>
+            <div class="model-sub" id="modelSub"></div>
+          </div>
+          <dl class="metrics" id="modelMetrics"></dl>
+        </div>
+
+        <div class="two-col">
+          <div class="block">
+            <div class="block-title">Coefficients estimés</div>
+            <div class="table-wrap"><table class="tbl" id="coefTable"></table></div>
+            <p class="foot" id="ljungNote"></p>
+          </div>
+          <div class="block">
+            <div class="block-title">Modèles des variables exogènes</div>
+            <div class="table-wrap"><table class="tbl" id="exogTable"></table></div>
+            <p class="foot">Ces deux modèles fournissent la température et l'humidité attendues à J+1 et J+2.</p>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">PM2.5 observé et ajusté <span class="hint">Prévision à un pas, sur toute la période</span></div>
+          <div id="chartFit" class="chart chart-tall"></div>
+        </div>
+        <div class="block">
+          <div class="block-title">Autocorrélation des résidus <span class="hint">Les barres doivent rester dans la bande grise</span></div>
+          <div id="chartAcf" class="chart"></div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnToForecast" type="button">Passer aux prévisions</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. PRÉVISIONS -->
+    <section class="panel" id="panel3" data-panel="3" aria-labelledby="h3" hidden>
+      <div class="panel-head">
+        <h2 id="h3">Prévoyez le PM2.5 pour demain et après-demain</h2>
+        <p>Chaque prévision est accompagnée de son intervalle à 95 % et des percentiles P25, P50 et P95 de la loi de prévision.</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnForecast" type="button">Calculer les prévisions</button>
+      </div>
+      <div id="forecastResult" hidden>
+        <div class="fc-tiles" id="fcTiles"></div>
+        <div class="block">
+          <div class="block-title">45 derniers jours et prévisions <span class="hint">Zones : seuils de concentration. Barre fine : intervalle à 95 %. Barre épaisse : P25 à P95.</span></div>
+          <div id="chartForecast" class="chart chart-tall"></div>
+        </div>
+        <div class="block">
+          <div class="block-title">Valeurs détaillées</div>
+          <div class="table-wrap"><table class="tbl" id="fcTable"></table></div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnToSim" type="button">Passer à la simulation</button>
+          <a class="btn btn-ghost" id="dlForecast" href="#" download>Télécharger pm25_forecast.csv</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. SIMULATION -->
+    <section class="panel" id="panel4" data-panel="4" aria-labelledby="h4" hidden>
+      <div class="panel-head">
+        <h2 id="h4">Simulez la dose de PM2.5 inhalée par épreuve</h2>
+        <p>Dose (mg) = concentration × ventilation × durée × 0,001. Chaque facteur est tiré dans une loi triangulaire (minimum, mode, maximum). La concentration est bornée par les P25, P50 et P95 de la prévision.</p>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Paramètres des épreuves</div>
+        <div class="table-wrap"><table class="tbl tbl-params" id="paramsTable"></table></div>
+      </div>
+
+      <div class="sim-controls">
+        <div class="field">
+          <label for="nSim">Nombre de simulations</label>
+          <input type="number" id="nSim" min="100" max="200000" step="100" value="10000">
+        </div>
+        <div class="field">
+          <label for="seed">Graine aléatoire</label>
+          <input type="number" id="seed" min="0" step="1" value="42">
+        </div>
+        <button class="btn btn-primary" id="btnSim" type="button">Lancer la simulation</button>
+      </div>
+
+      <div id="simResult" hidden>
+        <div class="seg" role="tablist" aria-label="Jour de prévision" id="daySeg"></div>
+        <div class="hist-grid" id="histGrid"></div>
+        <p class="foot">Trait plein : P50. Traits pointillés fins : P25 et P95. Trait rouge : seuil de 15 mg utilisé pour classer la dose.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="btnToClass" type="button">Voir la classification</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. CLASSIFICATION -->
+    <section class="panel" id="panel5" data-panel="5" aria-labelledby="h5" hidden>
+      <div class="panel-head">
+        <h2 id="h5">Classification de l'exposition</h2>
+        <p>Chaque piste représente une épreuve. Le segment couvre la dose entre P25 et P95, le point marque la médiane. La couleur donne le niveau provisoire.</p>
+      </div>
+
+      <div id="classResult" hidden>
+        <div class="legend" id="legend"></div>
+        <div id="board"></div>
+
+        <div class="block">
+          <div class="block-title">Tableau complet</div>
+          <div class="table-wrap"><table class="tbl tbl-class" id="classTable"></table></div>
+        </div>
+
+        <div class="block matrix-block">
+          <div class="block-title">Règle de décision</div>
+          <div class="table-wrap"><table class="tbl tbl-matrix" id="matrixTable"></table></div>
+        </div>
+
+        <div class="downloads">
+          <div class="downloads-title">Télécharger les résultats</div>
+          <div class="downloads-row">
+            <a class="btn btn-primary" id="dlAll" href="#" download>Tout (.zip)</a>
+            <a class="btn btn-ghost" id="dlXlsx" href="#" download>Classeur Excel</a>
+            <a class="btn btn-ghost" id="dlClass" href="#" download>exposure_classification.csv</a>
+            <a class="btn btn-ghost" id="dlForecast2" href="#" download>pm25_forecast.csv</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot-page">
+    <p>Reproduction en Python du script <code>sarimax_pm25_forecast_classification.R</code>. Les tirages aléatoires diffèrent de ceux de R : les quantiles simulés varient légèrement d'une exécution à l'autre selon la graine.</p>
+  </footer>
+
+  <div class="busy" id="busy" hidden role="status" aria-live="polite">
+    <div class="busy-box">
+      <div class="spinner" aria-hidden="true"></div>
+      <div id="busyText">Traitement en cours</div>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="alert" hidden></div>
+
+  <script src="/static/vendor/plotly.min.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
